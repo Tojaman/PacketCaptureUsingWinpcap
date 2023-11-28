@@ -95,21 +95,36 @@ typedef struct DNS {
 
 }domain;
 
-// DNS 패킷을 처리하는 함수
+typedef struct DHCP {
+	unsigned char op;             // 오퍼레이션 코드(메시지 처리 방식)
+	unsigned char htype;          // 하드웨어 타입
+	unsigned char hlen;           // 하드웨어 주소 길이
+	unsigned char hops;           // Hops
+	unsigned int transactionId;   // 트랜잭션 ID
+	unsigned short elapsed;       // DHCP 헤더 내의 시간 정보
+	unsigned short flags;         // DHCP 헤더 내의 부팅 프로세스 플래그
+	unsigned char messageType;    // DHCP 메시지 타입을 나타내는 값
+} DHCP;
+
+// HTTP 패킷을 처리하는 함수
 void packet_handler_http(u_char* param, const struct pcap_pkthdr* h, const u_char* data);
+// DNS 패킷을 처리하는 함수
 void packet_handler_dns(u_char* param, const struct pcap_pkthdr* h, const u_char* data);
+// DHCP 패킷을 처리하는 함수
+void packet_handler_dhcp(u_char* param, const struct pcap_pkthdr* h, const u_char* data);
 
 // 프로토콜 정보를 출력하는 함수
-void print_protocol(Ethernet_Header* EH, IPHeader* IH, CheckSummer* CS);
+void print_protocol(IPHeader* IH, CheckSummer* CS);
 
 // 패킷의 16진수 데이터를 출력하는 함수
 void print_packet_hex_data(u_char* data, int Size);
 
+// pcap_loop 실행 함수
+void run_pcap_loop(pcap_t* pickedDev, void (*handler)());
+
+// HTTP 요청 패킷, 응답 패킷 필터링
 boolean is_http_packet(uint8_t* data);
 
-
-/*전역변수*/
-u_int sel = 0;
 
 void main() {
 	pcap_if_t* allDevice;
@@ -146,31 +161,34 @@ void main() {
 	pcap_freealldevs(allDevice);
 
 	while (1) {
-		printf("\n프로토콜을 선택해 주세요.\n");
-		printf(" 1. TCP\n 2. UDP\n 3. HTTP\n 4. FTP\n 5. DNS\n 6. DHCP\n 8. IP로 검색\n");
+		int protocol = 0;
+		printf("\n분석을 원하는 프로토콜을 고르시오.\n");
+		printf("1. FTP(TCP)\n2. HTTP(TCP)\n3. DNS(UDP)\n4. DHCP\n5. 종료\n");
 		printf(" >> ");
-		scanf_s("%d", &sel);
-		switch (sel) {
+		scanf_s("%d", &protocol);
+
+		printf("\n패킷 분석 중 멈추고 싶으면 'p', 나가고 싶으면 'q'를 누르시오.\n\n");
+		Sleep(3000);
+
+
+		switch (protocol) {
 		case 1:
 			printf("안할듯");
 			break;
 		case 2:
-			printf("안할듯");
+			run_pcap_loop(pickedDev, packet_handler_http);
 			break;
 		case 3:
-			pcap_loop(pickedDev, 0, packet_handler_http, NULL);
+			run_pcap_loop(pickedDev, packet_handler_dns);
 			break;
 		case 4:
-			printf("준비중");
+			run_pcap_loop(pickedDev, packet_handler_dhcp);
 			break;
 		case 5:
-			pcap_loop(pickedDev, 0, packet_handler_dns, NULL);
-			break;
-		case 6:
-			printf("준비중");
+			printf("프로그램을 종료합니다.\n");
 			break;
 		default:
-			printf("다시입력\n");
+			printf("잘못 누르셨습니다. 다시 입력해주세요.\n");
 			break;
 		}
 	}
@@ -194,7 +212,7 @@ void packet_handler_http(u_char* param, const struct pcap_pkthdr* h, const u_cha
 		// HTTP 패킷
 		uint8_t* packet = data + 34 + (IH->HeaderLength) * 4;
 		if (is_http_packet(packet)) {
-			print_protocol(EH, IH, CS);
+			print_protocol(IH, CS);
 
 			printf("┃  --------------------------------------------------------------------------  \n");
 			printf("┃\t\t*[ TCP 헤더 ]*\t\t\n");
@@ -232,6 +250,7 @@ void packet_handler_dns(u_char* param, const struct pcap_pkthdr* h, const u_char
 	(VOID)(data);
 
 	Ethernet_Header* EH = (Ethernet_Header*)data;
+
 	IPHeader* IH = (struct IPHeader*)(data + 14);
 	CheckSummer* CS = (struct CheckSummer*)(data + 14);
 	UDP_HDR* UDP = (struct UDP_HDR*)(data + 34);
@@ -239,7 +258,7 @@ void packet_handler_dns(u_char* param, const struct pcap_pkthdr* h, const u_char
 
 	// UDP 포트가 53이면서 프로토콜이 UDP인 경우에만 처리
 	if ((ntohs(UDP->source_port) == 53 || ntohs(UDP->dest_port) == 53) && IH->Protocol == IPPROTO_UDP) {
-		print_protocol(EH, IH, CS);
+		print_protocol(IH, CS);
 
 		printf("┃  --------------------------------------------------------------------------  \n");
 		printf("┃\t\t*[ UDP 헤더 ]*\t\t\n");
@@ -270,14 +289,78 @@ void packet_handler_dns(u_char* param, const struct pcap_pkthdr* h, const u_char
 	}
 }
 
-// UDP 왜넣음?
-void print_protocol(Ethernet_Header* EH, IPHeader* IH, CheckSummer* CS) {
-	printf("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-	printf("┃\t\t*[ Ethernet 헤더 ]*\t\t\n");
-	printf("┃\tSrc MAC : %02x-%02x-%02x-%02x-%02x-%02x\n", EH->src[0], EH->src[1], EH->src[2], EH->src[3], EH->src[4], EH->src[5]);//송신자 MAC
-	printf("┃\tDst MAC : %02x-%02x-%02x-%02x-%02x-%02x\n", EH->des[0], EH->des[1], EH->des[2], EH->des[3], EH->des[4], EH->des[5]);//수신자 MAC
-	printf("┃--------------------------------------------\n");
+void packet_handler_dhcp(u_char* param, const struct pcap_pkthdr* h, const u_char* data) {
+	(VOID)(param);
+	(VOID)(data);
 
+	Ethernet_Header* EH = (Ethernet_Header*)data;
+
+	IPHeader* IH = (struct IPHeader*)(data + 14);
+	CheckSummer* CS = (struct CheckSummer*)(data + 14);
+	UDP_HDR* UDP = (struct UDP_HDR*)(data + 34);
+	DHCP* dhcp = (struct DHCP*)(data + 42);
+
+
+	const char* dhcpMessageType = "";
+	switch (data[284]) {
+	case 1:
+		dhcpMessageType = "DHCP Discover";
+		break;
+	case 2:
+		dhcpMessageType = "DHCP Offer";
+		break;
+	case 3:
+		dhcpMessageType = "DHCP Request";
+		break;
+	case 4:
+		dhcpMessageType = "DHCP Decline";
+		break;
+	case 5:
+		dhcpMessageType = "DHCP Acknowledge";
+		break;
+	case 6:
+		dhcpMessageType = "DHCP Negative Acknowledge";
+		break;
+	case 7:
+		dhcpMessageType = "DHCP Release";
+		break;
+	case 8:
+		dhcpMessageType = "DHCP Inform";
+		break;
+	default:
+		dhcpMessageType = "Unknown DHCP Message Type";
+		break;
+	}
+
+	// UDP 포트가 67이면서 프로토콜이 DHCP인 경우에만 처리
+	if ((ntohs(UDP->source_port) == 67 || ntohs(UDP->dest_port) == 67) && IH->Protocol == IPPROTO_UDP) {
+		print_protocol(IH, CS);
+
+		printf("┃  --------------------------------------------------------------------------  \n");
+		printf("┃\t\t*[ UDP 헤더 ]*\t\t\n");
+		printf("┃\tSrc Port : %d\n", ntohs(UDP->source_port)); // 출발지 포트
+		printf("┃\tDest Port : %d\n", ntohs(UDP->dest_port)); // 목적지 포트
+		printf("┃\tLength : %d\n", ntohs(UDP->udp_length)); // 길이
+		printf("┃\tChecksum : 0x%04X\n", ntohs(UDP->udp_checksum)); // 체크섬
+		printf("┃\n");
+
+		printf("┃  --------------------------------------------------------------------------  \n");
+		printf("┃\t\t*[ Application 헤더 ]*\t\t\n");
+		printf("┃\tMessage Type: %s\n", dhcpMessageType); // DHCP 메시지 타입
+		printf("┃\tOperation Code (op): %d\n", dhcp->op);
+		printf("┃\tHardware Type (htype): 0x%02X\n", dhcp->htype);
+		printf("┃\tHardware Address Length: %d\n", dhcp->hlen);
+		printf("┃\tHops: %d\n", dhcp->hops); // Hops
+		printf("┃\tTransaction ID: 0x%08x\n", ntohl(dhcp->transactionId)); // 트랜잭션 ID
+		printf("┃\tElapsed: %d\n", ntohs(dhcp->elapsed)); // DHCP 헤더 내의 시간 정보
+		printf("┃\tFlags: 0x%04X\n", ntohs(dhcp->flags)); // 부팅 프로세스 플래그
+		printf("┃\n");
+		printf("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
+	}
+}
+
+// 이더넷 헤더, UDP, TCP 헤더 뺌
+void print_protocol(IPHeader* IH, CheckSummer* CS) {
 	printf("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 	printf("┃\t\t*[ IP 헤더 ]*\n");
 	printf("┃\tChecksum : 0x%04X\n", ntohs(CS->checksum)); // 체크섬
@@ -319,7 +402,6 @@ void print_packet_hex_data(u_char* data, int Size) {
 			for (j = 0; j <= i % 16; j++) {
 				printf("   ");
 			}
-
 		}
 	}
 	printf("\n");
@@ -337,4 +419,21 @@ boolean is_http_packet(uint8_t* data) {
 			return 1;
 	}
 	return 0;
+}
+
+void run_pcap_loop(pcap_t* pickedDev, void (*handler)()) {
+    while (1) {
+        if (_kbhit()) {
+            char ch = _getch();
+            if (ch == 'q' || ch == 'Q') {
+                break;
+            }
+            else if (ch == 'p' || ch == 'P') {
+                printf("일시정지(아무키 입력시 다시 분석 진행)\n");
+                _getch();
+                printf("다시 실행\n");
+            }
+        }
+        pcap_loop(pickedDev, 0, handler, NULL);
+    }
 }
