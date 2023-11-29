@@ -51,12 +51,12 @@ typedef struct TCPHeader
 	unsigned char ns : 1;
 	unsigned char reserved_part1 : 3;
 	unsigned char data_offset : 4;
-	unsigned char fin : 1;
-	unsigned char syn : 1;
-	unsigned char rst : 1;
-	unsigned char psh : 1;
-	unsigned char ack : 1;
-	unsigned char urg : 1;
+	unsigned char fin : 1; // flag
+	unsigned char syn : 1; // flag
+	unsigned char rst : 1; // flag
+	unsigned char psh : 1; // flag
+	unsigned char ack : 1; // flag
+	unsigned char urg : 1; // flag
 	unsigned char ecn : 1;
 	unsigned char cwr : 1;
 	unsigned short window;
@@ -112,6 +112,8 @@ void packet_handler_http(u_char* param, const struct pcap_pkthdr* h, const u_cha
 void packet_handler_dns(u_char* param, const struct pcap_pkthdr* h, const u_char* data);
 // DHCP 패킷을 처리하는 함수
 void packet_handler_dhcp(u_char* param, const struct pcap_pkthdr* h, const u_char* data);
+// FTP 패킷을 처리하는 함수
+void packet_handler_ftp(u_char* param, const struct pcap_pkthdr* h, const u_char* data);
 
 // 프로토콜 정보를 출력하는 함수
 void print_protocol(IPHeader* IH, CheckSummer* CS);
@@ -173,7 +175,7 @@ void main() {
 
 		switch (protocol) {
 		case 1:
-			printf("안할듯");
+			run_pcap_loop(pickedDev, packet_handler_ftp);
 			break;
 		case 2:
 			run_pcap_loop(pickedDev, packet_handler_http);
@@ -194,7 +196,7 @@ void main() {
 	}
 }
 
-void packet_handler_http(u_char* param, const struct pcap_pkthdr* h, const u_char* data) {
+void packet_handler_ftp(u_char* param, const struct pcap_pkthdr* h, const u_char* data) {
 	(VOID)(param);
 	(VOID)(data);
 
@@ -233,6 +235,77 @@ void packet_handler_http(u_char* param, const struct pcap_pkthdr* h, const u_cha
 				memcpy(headers, packet, header_length);
 				headers[header_length] = '\0'; // 문자열 끝에 null 문자 추가
 				printf("%s", headers);
+				free(headers); // 동적으로 할당한 메모리 해제
+			}
+			else {
+				// '\r\n\r\n'이 발견되지 않은 경우, 전체 패킷 출력
+				printf("┃\t%s", packet);
+			}
+			printf("┃\n");
+			printf("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
+		}
+	}
+}
+
+void packet_handler_http(u_char* param, const struct pcap_pkthdr* h, const u_char* data) {
+	(VOID)(param);
+	(VOID)(data);
+
+	Ethernet_Header* EH = (Ethernet_Header*)data;
+	IPHeader* IH = (struct IPHeader*)(data + 14);
+	CheckSummer* CS = (struct CheckSummer*)(data + 14);
+	TCPHeader* TCP = (TCPHeader*)(data + 14 + (IH->HeaderLength) * 4);
+
+	// UDP 포트가 80이면서 프로토콜이 TCP인 경우에만 처리
+	if ((ntohs(TCP->source_port) == 80 || ntohs(TCP->dest_port) == 80) && IH->Protocol == IPPROTO_TCP) {
+
+		// 34 == 이더넷 헤더 크기(14) + TCP 헤더 크기(20)
+		// IH->HeaderLength == IP 헤드의 길이(32bit 단위) / IH->HeaderLength*4 == IP 헤드의 길이(byte 단위)
+		// 결론 : 34 + (IH->HeaderLength) * 4는 포인터를 이더넷과 IP 헤더를 건너뛰고 패킷의 페이로드 데이터 시작 부분을 가리키도록 설정
+		// HTTP 패킷
+		uint8_t* packet = data + 34 + (IH->HeaderLength) * 4;
+		if (is_http_packet(packet)) {
+			print_protocol(IH, CS);
+
+			printf("┃  --------------------------------------------------------------------------  \n");
+			printf("┃\t\t*[ TCP 헤더 ]*\t\t\n");
+			printf("┃\tSCR PORT : %d\n", ntohs(TCP->source_port));
+			printf("┃\tDEST PORT : %d\n", ntohs(TCP->dest_port));
+			printf("┃\tSeg : %u\n", ntohl(TCP->sequence));
+			printf("┃\tAck : %u\n", ntohl(TCP->acknowledge));
+			printf("┃\tWindow size : %u\n", ntohl(TCP->window));
+			printf("┃\tChecksum : 0x%04X\n", ntohs(TCP->tcp_checksum)); // 체크섬
+			printf("┃\n");
+			printf("┃  ---------------flag---------------\n");
+			printf("┃\tfin : %u\n", ntohl(TCP->fin));
+			printf("┃\tsyn : %u\n", ntohl(TCP->syn));
+			printf("┃\trst : %u\n", ntohl(TCP->rst));
+			printf("┃\tpsh : %u\n", ntohl(TCP->psh));
+			printf("┃\tack : %u\n", ntohl(TCP->ack));
+			printf("┃\turg : %u\n", ntohl(TCP->urg));
+			printf("┃\n");
+			printf("┃  --------------------------------------------------------------------------  \n");
+			printf("┃\t\t*[ Application 헤더 ]*\t\t\n");
+			char* end_of_headers = strstr((char*)packet, "\r\n\r\n");
+			if (end_of_headers != NULL) {
+				// '\r\n\r\n'이 발견된 경우, 해당 위치까지만 출력
+				int header_length = end_of_headers - (char*)packet;
+				char* headers = (char*)malloc(header_length + 1); // 배열의 크기를 변수로 둘 수 없기 때문에 동적 메모리 할당
+				headers[header_length + 1];
+				memcpy(headers, packet, header_length);
+				headers[header_length] = '\0'; // 문자열 끝에 null 문자 추가
+
+				const char* token;
+				token = strtok(headers, "\r\n");
+				if (token != NULL) {
+					printf("┃\t%s\n", token);
+				}
+
+				// 나머지 헤더 출력
+				while ((token = strtok(NULL, "\r\n")) != NULL) {
+					printf("┃\t%s\n", token);
+				}
+				//printf("%s", headers);
 				free(headers); // 동적으로 할당한 메모리 해제
 			}
 			else {
